@@ -18,9 +18,19 @@ const styles = {
 
 type Status = { type: "success" | "error"; text: string };
 
+type Progress = { processed: number; total: number };
+
+type Job = Progress & {
+  status: "processing" | "done" | "error";
+  transcript: string | null;
+  error: string | null;
+};
+
 export default function VideoUpload() {
   const [video, setVideo] = useState<File | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
+  const [transcript, setTranscript] = useState("");
+  const [progress, setProgress] = useState<Progress | null>(null);
   const [loading, setLoading] = useState(false);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -50,6 +60,7 @@ export default function VideoUpload() {
 
     setLoading(true);
     setStatus(null);
+    setTranscript("");
 
     try {
       const response = await fetch("http://localhost:8000/upload", {
@@ -63,10 +74,14 @@ export default function VideoUpload() {
         throw new Error(result.detail || "Upload failed.");
       }
 
-      setStatus({
-        type: "success",
-        text: result.message || "Video uploaded successfully!",
-      });
+      // The upload is done; now wait for the OCR job, updating the
+      // progress bar each time we check on it.
+      const job = await waitForJob(result.job_id, ({ processed, total }) =>
+        setProgress({ processed, total }),
+      );
+
+      setStatus({ type: "success", text: "Video processed successfully!" });
+      setTranscript(job.transcript || "No text detected in this video.");
     } catch (error) {
       setStatus({
         type: "error",
@@ -74,6 +89,7 @@ export default function VideoUpload() {
       });
     } finally {
       setLoading(false);
+      setProgress(null);
     }
   }
 
@@ -108,6 +124,7 @@ export default function VideoUpload() {
   function clearVideo() {
     setVideo(null);
     setStatus(null);
+    setTranscript("");
   }
 
   return (
@@ -124,7 +141,7 @@ export default function VideoUpload() {
         onDrop={handleDrop}
         className={cn(
           styles.dropzone,
-          dragging ? styles.dropzoneActive : styles.dropzoneIdle
+          dragging ? styles.dropzoneActive : styles.dropzoneIdle,
         )}
       >
         <input
@@ -155,7 +172,11 @@ export default function VideoUpload() {
 
       <SubmitButton loading={loading} disabled={!video || loading} />
 
+      {loading && <ProgressBar progress={progress} />}
+
       {status && <StatusMessage status={status} />}
+
+      {transcript && <Transcript text={transcript} />}
 
       <p className="mt-5 text-center text-xs leading-5 text-gray-400">
         Your video will be sent to the server for processing.
@@ -229,7 +250,7 @@ function SubmitButton({
       {loading ? (
         <>
           <LoaderCircle className="animate-spin" size={18} />
-          Uploading video...
+          Processing video...
         </>
       ) : (
         <>
@@ -250,12 +271,82 @@ function StatusMessage({ status }: { status: Status }) {
         "mt-4 rounded-xl px-4 py-3 text-sm",
         status.type === "success"
           ? "bg-green-50 text-green-700"
-          : "bg-blush text-rose-deep"
+          : "bg-blush text-rose-deep",
       )}
     >
       {status.text}
     </p>
   );
+}
+
+function ProgressBar({ progress }: { progress: Progress | null }) {
+  // progress is null while the file is still uploading, before a job exists.
+  const percent = progress?.total
+    ? Math.round((progress.processed / progress.total) * 100)
+    : 0;
+
+  let label = "Uploading video...";
+  if (progress) {
+    label = progress.total
+      ? `Reading text: frame ${progress.processed} of ${progress.total} (${percent}%)`
+      : "Loading OCR model...";
+  }
+
+  return (
+    <div className="mt-4">
+      <p className="mb-2 text-xs text-gray-500">{label}</p>
+      <div
+        role="progressbar"
+        aria-label="Processing progress"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+        className="h-2 overflow-hidden rounded-full bg-blush"
+      >
+        <div
+          className="h-full rounded-full bg-petal-rouge transition-all duration-500"
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function Transcript({ text }: { text: string }) {
+  return (
+    <section className="mt-4">
+      <h3 className="mb-2 text-sm font-semibold text-gray-800">
+        Detected text
+      </h3>
+      <pre className="max-h-80 overflow-y-auto whitespace-pre-wrap rounded-xl border border-pastel-pink/60 bg-[#fffafb] p-4 font-sans text-sm leading-6 text-gray-800">
+        {text}
+      </pre>
+    </section>
+  );
+}
+
+// Check the job once a second until it finishes or fails.
+async function waitForJob(
+  jobId: string,
+  onProgress: (job: Job) => void,
+): Promise<Job> {
+  while (true) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    const response = await fetch(`http://localhost:8000/api/jobs/${jobId}`);
+    const job = await response.json();
+
+    if (!response.ok) {
+      throw new Error(job.detail || "Could not check processing progress.");
+    }
+
+    onProgress(job);
+
+    if (job.status === "done") return job;
+    if (job.status === "error") {
+      throw new Error(job.error || "Video processing failed.");
+    }
+  }
 }
 
 function formatSize(bytes: number) {
