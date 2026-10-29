@@ -1,0 +1,9 @@
+node_modules/
+.DS_Store
+
+# Python
+__pycache__/
+.venv/
+
+# Videos uploaded while testing the backend
+screen_reader/backend/uploads/
