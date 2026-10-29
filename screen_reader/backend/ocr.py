@@ -7,8 +7,9 @@ from pathlib import Path
 import cv2
 from paddleocr import PaddleOCR
 
-FRAME_INTERVAL_SECONDS = 1.0  # OCR one frame per second
+FRAME_INTERVAL_SECONDS = 0.2  # OCR one frame per second
 MIN_CONFIDENCE = 0.6  # ignore text PaddleOCR is unsure about
+SUBTITLE_AREA = 0.3  # only read text in the bottom 30% of the frame
 
 
 @cache
@@ -24,9 +25,15 @@ def get_ocr() -> PaddleOCR:
         use_textline_orientation=False,
     )
 
+def crop_to_subtitles(frame):
+    """Keep only the bottom part of the frame, where subtitles appear."""
+    height = frame.shape[0]
+    top = int(height * (1 - SUBTITLE_AREA))
+    return frame[top:, :]
+
 def read_frame_text(frame) -> list[str]:
     """Run OCR on one frame and return the lines of text found."""
-    result = get_ocr().predict(frame)[0]
+    result = get_ocr().predict(crop_to_subtitles(frame))[0]
 
     return [
         text.strip()
