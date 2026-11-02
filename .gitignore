@@ -7,3 +7,7 @@ __pycache__/
 
 # Videos uploaded while testing the backend
 screen_reader/backend/uploads/
+
+# Local database and recipe photos created by the backend
+screen_reader/backend/simmer.db
+screen_reader/backend/thumbnails/

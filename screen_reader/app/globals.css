@@ -1,9 +1,8 @@
-
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fdf7f8;
+  --foreground: #2e2428;
 }
 
 @theme inline {
@@ -11,9 +10,9 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
 
-  /* Fonts */
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Fonts (loaded in app/layout.tsx) */
+  --font-sans: var(--font-inter);
+  --font-display: var(--font-dm-serif);
 
   /* Pink palette */
   --color-blush: #ffe5ec;
@@ -25,10 +24,20 @@
   /* Darker accent colours */
   --color-rose-dark: #d40539;
   --color-rose-deep: #8d0426;
+
+  /* Page roles, matching the Figma design with pink in place of green */
+  --color-paper: #fdf7f8; /* page background */
+  --color-ink: #2e2428; /* headings and main text */
+  --color-muted: #7a6a70; /* secondary text */
+  --color-line: #f0dde2; /* borders and dividers */
+  --color-rose: #b8355b; /* buttons, links, icons, accents */
+  --color-rose-hover: #9c2a4b;
+  --color-shell: #f8eef0; /* soft note panels */
+  --color-peach: #fbe6dc; /* avatars and warm notes */
+  --color-cocoa: #2a1b20; /* dark overlay behind video subtitles */
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
 }
