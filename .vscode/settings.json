@@ -1,4 +1,5 @@
 {
-  "python-envs.defaultEnvManager": "ms-python.python:system",
+  "python.defaultInterpreterPath": "${workspaceFolder}/screen_reader/backend/.venv/bin/python",
+  "python-envs.defaultEnvManager": "ms-python.python:venv",
   "python-envs.pythonProjects": []
 }

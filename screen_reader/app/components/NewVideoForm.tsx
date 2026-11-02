@@ -42,12 +42,39 @@ export default function NewVideoForm() {
 
     try {
       const jobId = await uploadVideo(video);
+      // Next.js keeps this page's state when you navigate away, so clear the
+      // form now. Otherwise it would still say "Uploading…" when you come
+      // back to add another video.
+      setVideo(null);
+      setLink("");
       router.push(`/videos/${jobId}`);
     } catch (error) {
       setError(error instanceof Error ? error.message : "Upload failed.");
+    } finally {
       setUploading(false);
     }
   }
+
+  function openFilePicker() {
+    inputRef.current?.click();
+  }
+
+  // Dropping a file works on the empty drop zone and on the selected-file
+  // card, so a new file can replace the current one.
+  const dropHandlers = {
+    onDragOver(event: React.DragEvent) {
+      event.preventDefault();
+      setDragging(true);
+    },
+    onDragLeave() {
+      setDragging(false);
+    },
+    onDrop(event: React.DragEvent) {
+      event.preventDefault();
+      setDragging(false);
+      if (!uploading) selectVideo(event.dataTransfer.files[0]);
+    },
+  };
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-3">
@@ -63,13 +90,40 @@ export default function NewVideoForm() {
         />
       </label>
 
+      {/* Kept outside the two views below, so it's always available for
+          picking a different file. */}
+      <input
+        ref={inputRef}
+        type="file"
+        accept="video/*"
+        className="hidden"
+        onChange={(event) => {
+          selectVideo(event.target.files?.[0]);
+          event.currentTarget.value = "";
+        }}
+      />
+
       {video ? (
-        <div className="flex items-center gap-3 rounded-md border border-line bg-blush/40 px-[13px] py-3">
+        <div
+          {...dropHandlers}
+          className={cn(
+            "flex items-center gap-3 rounded-md border px-[13px] py-3 transition",
+            dragging ? "border-rose bg-blush" : "border-line bg-blush/40",
+          )}
+        >
           <FileVideo size={18} strokeWidth={1.7} className="shrink-0 text-rose" aria-hidden />
           <div className="min-w-0 flex-1">
             <p className="truncate text-xs font-semibold text-ink">{video.name}</p>
             <p className="text-[11px] text-muted">{formatSize(video.size)}</p>
           </div>
+          <button
+            type="button"
+            disabled={uploading}
+            onClick={openFilePicker}
+            className="rounded px-2 py-1 text-[11px] font-semibold text-rose transition hover:bg-blush disabled:opacity-40"
+          >
+            Change
+          </button>
           <button
             type="button"
             disabled={uploading}
@@ -84,23 +138,14 @@ export default function NewVideoForm() {
         <div
           role="button"
           tabIndex={0}
-          onClick={() => inputRef.current?.click()}
+          onClick={openFilePicker}
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") {
               event.preventDefault();
-              inputRef.current?.click();
+              openFilePicker();
             }
           }}
-          onDragOver={(event) => {
-            event.preventDefault();
-            setDragging(true);
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(event) => {
-            event.preventDefault();
-            setDragging(false);
-            selectVideo(event.dataTransfer.files[0]);
-          }}
+          {...dropHandlers}
           className={cn(
             "flex cursor-pointer items-center gap-2.5 rounded-md border border-dashed px-[13px] py-3.5 text-xs transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blush",
             dragging
@@ -116,16 +161,6 @@ export default function NewVideoForm() {
             </span>
             <span className="text-muted"> · MP4, MOV, AVI, MKV or WebM</span>
           </span>
-          <input
-            ref={inputRef}
-            type="file"
-            accept="video/*"
-            className="hidden"
-            onChange={(event) => {
-              selectVideo(event.target.files?.[0]);
-              event.currentTarget.value = "";
-            }}
-          />
         </div>
       )}
 
