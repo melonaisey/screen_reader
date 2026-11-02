@@ -14,6 +14,7 @@ Rules:
 - Convert spoken quantities to numbers and short units ("两勺" -> 2 tbsp, "半茶匙" -> 0.5 tsp). Use metric units where the video uses them.
 - Write steps in the order they happen, as short imperative instructions. Each step's "time" must be the time in seconds of the transcript line where that step begins, copied exactly from the transcript.
 - Estimate prep and cook times only from what the video describes; use "Not stated" when there's nothing to go on.
+- If the transcript mentions to marinate an ingredient using multiple ingredients, put that all into one step. 
 - Write the summary and note in warm, plain English.
 - If the video isn't a cooking video, set "is_recipe" to false and fill the other fields with empty values."""
 

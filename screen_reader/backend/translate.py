@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 import anthropic
 
-MODEL = "claude-opus-5-5"
+MODEL = "claude-sonnet-5-5"
 BATCH_SIZE = 40  # subtitle lines per request
 CONTEXT_LINES = 5  # earlier lines sent along so each batch is read in context
 
