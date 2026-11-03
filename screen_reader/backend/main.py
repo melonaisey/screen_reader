@@ -1,3 +1,4 @@
+import tempfile
 from pathlib import Path
 from uuid import uuid4
 
@@ -5,10 +6,11 @@ import anthropic
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 
 import db
+from fetch import FetchError, download_video
 from ocr import extract_segments, save_thumbnail
 from recipe import RecipeError, generate_recipe
 from translate import TranslationError, translate_segments
@@ -40,8 +42,34 @@ db.init_db()
 
 # Progress of each video while it's being processed, keyed by job ID. Once
 # it's finished, the result is saved to the database (db.py), so it survives
-# server restarts.
+# server restarts. Videos themselves are never kept: links are downloaded to
+# a temporary folder and uploads are deleted once they've been processed.
 jobs: dict[str, dict] = {}
+
+
+def new_job(video_name: str, stage: str, file_name: str = "") -> str:
+    job_id = uuid4().hex
+    jobs[job_id] = {
+        "status": "processing",
+        "stage": stage,  # "downloading" -> "reading" -> "translating" -> "recipe"
+        "video_name": video_name,
+        "file_name": file_name,
+        "downloaded": 0,
+        "download_total": 0,
+        "processed": 0,
+        "total": 0,
+        "translated": 0,
+        "translate_total": 0,
+        "segments": [],
+        "transcript": None,
+        "recipe": None,
+        "favourite": False,
+        "error": None,
+        "translation_error": None,
+        "recipe_error": None,
+        **{column: None for column in db.SOURCE_COLUMNS},
+    }
+    return job_id
 
 
 def describe_api_error(error: anthropic.APIError) -> str:
@@ -57,8 +85,13 @@ def describe_api_error(error: anthropic.APIError) -> str:
     return "Something went wrong talking to the Anthropic API."
 
 
-def run_ocr_job(job_id: str, video_path: Path):
+def process_video(job_id: str, video_path: Path, source: dict | None = None):
+    """Read, translate and make a recipe from a video, then save the results.
+
+    source holds the details of a linked video; it's None for uploads.
+    """
     job = jobs[job_id]
+    job["stage"] = "reading"
 
     def update_progress(processed: int, total: int):
         job["processed"] = processed
@@ -104,17 +137,51 @@ def run_ocr_job(job_id: str, video_path: Path):
     else:
         job["recipe_error"] = "No subtitles were found, so there was nothing to make a recipe from."
 
-    save_thumbnail(video_path, THUMBNAIL_DIR / f"{job_id}.jpg")
+    # Linked videos use the platform's own thumbnail; uploads keep one frame.
+    if source is None:
+        save_thumbnail(video_path, THUMBNAIL_DIR / f"{job_id}.jpg")
+
     db.save_video(
         job_id,
         video_name=job["video_name"],
-        file_name=video_path.name,
+        file_name="",  # the video itself isn't kept
         segments=segments,
         recipe=job["recipe"],
         translation_error=job["translation_error"],
         recipe_error=job["recipe_error"],
+        source=source,
     )
     job["status"] = "done"
+
+
+def run_upload_job(job_id: str, video_path: Path):
+    try:
+        process_video(job_id, video_path)
+    finally:
+        # Only the recipe is kept, never the video.
+        video_path.unlink(missing_ok=True)
+
+
+def run_link_job(job_id: str, url: str):
+    job = jobs[job_id]
+
+    def update_download_progress(downloaded: int, total: int):
+        job["downloaded"] = downloaded
+        job["download_total"] = total
+
+    # The temporary folder, and the video in it, is deleted as soon as this
+    # block ends, whether processing worked or not.
+    with tempfile.TemporaryDirectory(prefix="simmer-") as folder:
+        try:
+            video_path, source = download_video(url, Path(folder), on_progress=update_download_progress)
+        except FetchError as error:
+            job["error"] = str(error)
+            job["status"] = "error"
+            return
+
+        job["video_name"] = source["title"]
+        job.update({column: source[column] for column in db.SOURCE_COLUMNS})
+        process_video(job_id, video_path, source)
 
 
 @app.get("/")
@@ -128,6 +195,22 @@ def hello():
         "message": "Hello from Python!",
         "status": "success"
     }
+
+
+class LinkRequest(BaseModel):
+    url: str
+
+
+@app.post("/api/links")
+def submit_link(request: LinkRequest, background_tasks: BackgroundTasks):
+    """Make a recipe from a video link (YouTube, Bilibili, ...)."""
+    url = request.url.strip()
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Please paste a full video link starting with https://.")
+
+    job_id = new_job(video_name="Video from link", stage="downloading")
+    background_tasks.add_task(run_link_job, job_id, url)
+    return {"job_id": job_id}
 
 
 @app.post("/upload")
@@ -168,25 +251,8 @@ async def upload_video(
 
     # Processing can take minutes, so start it in the background and reply
     # right away. The frontend then checks GET /api/jobs/{job_id} for progress.
-    job_id = uuid4().hex
-    jobs[job_id] = {
-        "status": "processing",
-        "stage": "reading",  # then "translating", then "recipe"
-        "video_name": file.filename,
-        "file_name": saved_path.name,
-        "processed": 0,
-        "total": 0,
-        "translated": 0,
-        "translate_total": 0,
-        "segments": [],
-        "transcript": None,
-        "recipe": None,
-        "favourite": False,
-        "error": None,
-        "translation_error": None,
-        "recipe_error": None,
-    }
-    background_tasks.add_task(run_ocr_job, job_id, saved_path)
+    job_id = new_job(video_name=file.filename or "Uploaded video", stage="reading", file_name=saved_path.name)
+    background_tasks.add_task(run_upload_job, job_id, saved_path)
 
     return {
         "job_id": job_id,
@@ -213,6 +279,8 @@ def get_job(job_id: str):
         **video,
         "status": "done",
         "stage": "recipe",
+        "downloaded": 0,
+        "download_total": 0,
         "processed": 0,
         "total": 0,
         "translated": 0,
@@ -242,14 +310,22 @@ def update_favourite(video_id: str, update: FavouriteUpdate):
 @app.get("/api/videos/{video_id}/thumbnail")
 def get_thumbnail(video_id: str):
     path = THUMBNAIL_DIR / f"{video_id}.jpg"
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="Thumbnail not found.")
-    return FileResponse(path, media_type="image/jpeg")
+    if path.is_file():
+        return FileResponse(path, media_type="image/jpeg")
+
+    # Linked videos use the platform's own thumbnail.
+    video = db.get_video(video_id)
+    thumbnail_url = (video or jobs.get(video_id) or {}).get("thumbnail_url")
+    if thumbnail_url:
+        return RedirectResponse(thumbnail_url)
+
+    raise HTTPException(status_code=404, detail="Thumbnail not found.")
 
 
 @app.get("/api/videos/{video_id}/file")
 def get_video_file(video_id: str):
-    """The uploaded video itself, so the reader page can play it."""
+    """An uploaded video, while it's being processed. Videos uploaded before
+    they stopped being kept can still be played too."""
     video = db.get_video(video_id)
     file_name = video["file_name"] if video else jobs.get(video_id, {}).get("file_name")
     path = UPLOAD_DIR / (file_name or "")

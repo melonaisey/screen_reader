@@ -8,12 +8,17 @@ DB_PATH = Path(__file__).resolve().parent / "simmer.db"
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS videos (
     id TEXT PRIMARY KEY,               -- the job ID from the upload
-    video_name TEXT NOT NULL,          -- original file name, e.g. "红烧肉.mp4"
-    file_name TEXT NOT NULL,           -- saved file name in uploads/
+    video_name TEXT NOT NULL,          -- video title or original file name
+    file_name TEXT NOT NULL,           -- file in uploads/, or "" if not kept
     created_at TEXT NOT NULL,          -- ISO timestamp (UTC)
     segments TEXT NOT NULL,            -- JSON: [{time, text, confidence, translation}]
     translation_error TEXT,
-    recipe_error TEXT
+    recipe_error TEXT,
+    source_url TEXT,                   -- for linked videos: where it came from
+    source_id TEXT,                    -- e.g. the YouTube video ID
+    platform TEXT,                     -- e.g. "Youtube", "BiliBili"
+    creator TEXT,
+    thumbnail_url TEXT
 );
 
 CREATE TABLE IF NOT EXISTS recipes (
@@ -40,9 +45,18 @@ def connect() -> sqlite3.Connection:
     return connection
 
 
+SOURCE_COLUMNS = ["source_url", "source_id", "platform", "creator", "thumbnail_url"]
+
+
 def init_db():
     with connect() as connection:
         connection.executescript(SCHEMA)
+        # Databases made before linked videos were supported don't have the
+        # source columns yet, so add them. Existing rows are kept as they are.
+        existing = {row["name"] for row in connection.execute("PRAGMA table_info(videos)")}
+        for column in SOURCE_COLUMNS:
+            if column not in existing:
+                connection.execute(f"ALTER TABLE videos ADD COLUMN {column} TEXT")
 
 
 def save_video(
@@ -53,11 +67,20 @@ def save_video(
     recipe: dict | None,
     translation_error: str | None,
     recipe_error: str | None,
+    source: dict | None = None,
 ):
-    """Save a processed video, and its recipe if it has one."""
+    """Save a processed video, and its recipe if it has one.
+
+    source holds the details of a linked video (see fetch.video_details);
+    it's None for uploaded files.
+    """
+    source = source or {}
     with connect() as connection:
         connection.execute(
-            "INSERT OR REPLACE INTO videos VALUES (?, ?, ?, ?, ?, ?, ?)",
+            """INSERT OR REPLACE INTO videos
+               (id, video_name, file_name, created_at, segments, translation_error,
+                recipe_error, source_url, source_id, platform, creator, thumbnail_url)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 video_id,
                 video_name,
@@ -66,6 +89,7 @@ def save_video(
                 json.dumps(segments, ensure_ascii=False),
                 translation_error,
                 recipe_error,
+                *(source.get(column) for column in SOURCE_COLUMNS),
             ),
         )
         if recipe:
@@ -93,7 +117,7 @@ def list_recipes() -> list[dict]:
         rows = connection.execute(
             """SELECT r.video_id AS id, r.title, r.meal, r.protein, r.cuisine,
                       r.vegetarian, r.one_pan, r.total_minutes, r.favourite,
-                      v.created_at, r.data
+                      v.created_at, v.platform, v.creator, r.data
                FROM recipes r JOIN videos v ON v.id = r.video_id
                ORDER BY v.created_at DESC"""
         ).fetchall()
@@ -133,6 +157,7 @@ def get_video(video_id: str) -> dict | None:
         "recipe_error": video["recipe_error"],
         "recipe": json.loads(recipe["data"]) if recipe else None,
         "favourite": bool(recipe["favourite"]) if recipe else False,
+        **{column: video[column] for column in SOURCE_COLUMNS},
     }
 
 

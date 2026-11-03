@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FileVideo, Link as LinkIcon, LoaderCircle, Play, Upload, X } from "lucide-react";
-import { uploadVideo } from "@/app/lib/api";
+import { submitLink, uploadVideo } from "@/app/lib/api";
 import { cn } from "@/app/lib/format";
 
 export default function NewVideoForm() {
@@ -30,10 +30,13 @@ export default function NewVideoForm() {
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!video) {
-      // The link field is from the design, but the backend can't download
-      // videos yet (that needs yt-dlp), so ask for a file instead.
-      setError("Video links aren’t supported yet. Please upload the video file below.");
+    const url = link.trim();
+    if (url && video) {
+      setError("Use either a link or a file, not both. Clear one of them to continue.");
+      return;
+    }
+    if (!url && !video) {
+      setError("Paste a video link or choose a video file first.");
       return;
     }
 
@@ -41,7 +44,7 @@ export default function NewVideoForm() {
     setError("");
 
     try {
-      const jobId = await uploadVideo(video);
+      const jobId = url ? await submitLink(url) : await uploadVideo(video!);
       // Next.js keeps this page's state when you navigate away, so clear the
       // form now. Otherwise it would still say "Uploading…" when you come
       // back to add another video.
@@ -174,7 +177,7 @@ export default function NewVideoForm() {
         ) : (
           <Play size={17} strokeWidth={1.7} aria-hidden />
         )}
-        {uploading ? "Uploading video..." : "Watch a new cooking video"}
+        {uploading ? (link.trim() ? "Starting..." : "Uploading video...") : "Watch a new cooking video"}
       </button>
 
       {error ? (
@@ -182,7 +185,9 @@ export default function NewVideoForm() {
           {error}
         </p>
       ) : (
-        <p className="text-[11px] text-muted">No manual notes. No more pausing to write.</p>
+        <p className="text-[11px] text-muted">
+          No manual notes. We read the video once and keep only the recipe, never the video.
+        </p>
       )}
     </form>
   );

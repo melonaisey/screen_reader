@@ -5,6 +5,7 @@ import Link from "next/link";
 import { CircleAlert, CircleCheck, LoaderCircle, Sparkles } from "lucide-react";
 import { getJob, setFavourite, thumbnailUrl, videoFileUrl, type Job } from "@/app/lib/api";
 import { refreshRecipes } from "@/app/lib/useRecipes";
+import { platformName } from "@/app/lib/format";
 import RecipeReader from "./RecipeReader";
 
 export default function VideoReader({ jobId }: { jobId: string }) {
@@ -76,8 +77,8 @@ export default function VideoReader({ jobId }: { jobId: string }) {
     ? Math.round((segments.reduce((sum, s) => sum + (s.confidence ?? 0), 0) / segments.length) * 100)
     : 0;
   const uploaded = job?.created_at
-    ? `Uploaded ${new Date(job.created_at).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })}`
-    : "Uploaded just now";
+    ? `Added ${new Date(job.created_at).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })}`
+    : "Added just now";
 
   return (
     <RecipeReader
@@ -90,13 +91,26 @@ export default function VideoReader({ jobId }: { jobId: string }) {
       title={title}
       subtitle={`${uploaded} · ${videoName}`}
       status={<JobStatus job={job} />}
-      video={{
-        src: videoFileUrl(jobId),
-        poster: job?.status === "done" ? thumbnailUrl(jobId) : undefined,
-        title: videoName,
-        details: "Uploaded from your computer",
-        initials: "me",
-      }}
+      video={
+        job?.source_url
+          ? {
+              embedUrl: embedPlayer(job.platform, job.source_id),
+              poster: thumbnailUrl(jobId),
+              link: { url: job.source_url, label: `Watch on ${platformName(job.platform)}` },
+              title: videoName,
+              details: [job.creator, platformName(job.platform)].filter(Boolean).join(" · "),
+              initials: (job.creator || "?").slice(0, 2).toLowerCase(),
+            }
+          : {
+              // Until the job has loaded, we don't know what kind of video it is.
+              src: job ? videoFileUrl(jobId) : undefined,
+              poster: job?.status === "done" ? thumbnailUrl(jobId) : undefined,
+              note: job ? "Only the recipe is kept, not the video, so it can’t be replayed here." : undefined,
+              title: videoName,
+              details: "Uploaded from your computer",
+              initials: "me",
+            }
+      }
       detection={
         job?.status === "done" && segments.length > 0
           ? {
@@ -159,7 +173,12 @@ function JobStatus({ job }: { job: Job | null }) {
         ? `Reading subtitles: frame ${job.processed} of ${job.total} (${percent}%)`
         : "Loading the OCR model…";
 
-    if (job?.stage === "translating") {
+    if (job?.stage === "downloading") {
+      percent = job.download_total ? Math.round((job.downloaded / job.download_total) * 100) : 0;
+      label = job.download_total
+        ? `Fetching the video (${percent}%)`
+        : "Fetching the video…";
+    } else if (job?.stage === "translating") {
       percent = job.translate_total ? Math.round((job.translated / job.translate_total) * 100) : 0;
       label = job.translate_total > 1
         ? `Translating to English: part ${job.translated + 1} of ${job.translate_total}`
@@ -223,4 +242,25 @@ function JobStatus({ job }: { job: Job | null }) {
       )}
     </div>
   );
+}
+
+// The platform's own embedded player, starting at a given time. Returns
+// undefined for sites without an embeddable player; those show the
+// thumbnail and a link to the original instead.
+function embedPlayer(platform: string | null, videoId: string | null) {
+  if (!platform || !videoId) return undefined;
+
+  switch (platform.toLowerCase()) {
+    case "youtube":
+      return (start: number, autoplay: boolean) =>
+        `https://www.youtube-nocookie.com/embed/${videoId}?start=${start}&autoplay=${autoplay ? 1 : 0}`;
+    case "bilibili": {
+      // yt-dlp IDs can have a part suffix, e.g. "BV1xx411c7mD_p1".
+      const bvid = videoId.split("_")[0];
+      return (start: number, autoplay: boolean) =>
+        `https://player.bilibili.com/player.html?bvid=${bvid}&t=${start}&autoplay=${autoplay ? 1 : 0}`;
+    }
+    default:
+      return undefined;
+  }
 }

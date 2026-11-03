@@ -20,3 +20,9 @@ export function formatAmount(amount: number) {
   if (fraction) return whole ? `${whole}${fraction}` : fraction;
   return Number.isInteger(amount) ? String(amount) : amount.toFixed(1);
 }
+
+/** "Youtube" -> "YouTube", "BiliBili" -> "Bilibili" (yt-dlp's names). */
+export function platformName(platform: string | null) {
+  const names: Record<string, string> = { youtube: "YouTube", bilibili: "Bilibili" };
+  return platform ? (names[platform.toLowerCase()] ?? platform) : "the original site";
+}

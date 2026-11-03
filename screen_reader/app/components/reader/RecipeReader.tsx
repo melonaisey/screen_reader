@@ -10,6 +10,7 @@ import {
   Clock3,
   CookingPot,
   Copy,
+  ExternalLink,
   Heart,
   Play,
   Printer,
@@ -22,8 +23,11 @@ import { cn, formatAmount, formatTime } from "@/app/lib/format";
 import SiteFooter from "../layout/SiteFooter";
 
 export type ReaderVideo = {
-  src: string;
+  src?: string; // a video file the backend can still serve
+  embedUrl?: (startSeconds: number, autoplay: boolean) => string; // the platform's own player
   poster?: string;
+  link?: { url: string; label: string }; // where the original video lives
+  note?: string; // shown over the poster when there's nothing to play
   title: string;
   details: string;
   initials: string;
@@ -49,10 +53,15 @@ export default function RecipeReader(props: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  // An embedded player can't be controlled directly, so jumping to a time
+  // reloads it starting there. The counter makes React replace the iframe.
+  const [embedStart, setEmbedStart] = useState({ seconds: 0, autoplay: false, count: 0 });
 
   function seek(time: number) {
     setCurrentTime(time);
-    if (videoRef.current) {
+    if (props.video.embedUrl) {
+      setEmbedStart((current) => ({ seconds: Math.floor(time), autoplay: true, count: current.count + 1 }));
+    } else if (videoRef.current) {
       videoRef.current.currentTime = time;
       void videoRef.current.play();
     }
@@ -73,15 +82,12 @@ export default function RecipeReader(props: Props) {
       <div className="grid gap-10 lg:grid-cols-[536fr_736fr]">
         <div className="flex min-w-0 flex-col gap-8">
           <section className="flex flex-col gap-4" aria-label="Video">
-            <video
-              ref={videoRef}
-              src={props.video.src}
-              poster={props.video.poster}
-              controls
-              preload="metadata"
-              onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
-              onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)}
-              className="aspect-video w-full rounded-xl bg-cocoa"
+            <VideoArea
+              video={props.video}
+              videoRef={videoRef}
+              embedStart={embedStart}
+              onTimeUpdate={setCurrentTime}
+              onDuration={setDuration}
             />
             <div className="flex items-center gap-2.5">
               <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full bg-peach font-display text-[15px] text-rose-deep">
@@ -91,6 +97,17 @@ export default function RecipeReader(props: Props) {
                 <p className="truncate text-xs font-semibold">{props.video.title}</p>
                 <p className="truncate text-[10px] text-muted">{props.video.details}</p>
               </div>
+              {props.video.link && (
+                <a
+                  href={props.video.link.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex shrink-0 items-center gap-1 text-[11px] font-semibold text-rose hover:text-rose-hover"
+                >
+                  {props.video.link.label}
+                  <ExternalLink size={13} strokeWidth={1.7} aria-hidden />
+                </a>
+              )}
             </div>
             {props.detection && (
               <div className="flex items-center gap-3 rounded-lg bg-blush p-4 text-rose">
@@ -123,6 +140,68 @@ export default function RecipeReader(props: Props) {
 
       <SiteFooter />
     </main>
+  );
+}
+
+function VideoArea({
+  video,
+  videoRef,
+  embedStart,
+  onTimeUpdate,
+  onDuration,
+}: {
+  video: ReaderVideo;
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  embedStart: { seconds: number; autoplay: boolean; count: number };
+  onTimeUpdate: (time: number) => void;
+  onDuration: (duration: number) => void;
+}) {
+  const [fileMissing, setFileMissing] = useState(false);
+
+  if (video.embedUrl) {
+    return (
+      <iframe
+        key={embedStart.count}
+        src={video.embedUrl(embedStart.seconds, embedStart.autoplay)}
+        title={video.title}
+        allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+        allowFullScreen
+        // YouTube refuses to play embeds that don't say which site they're on.
+        referrerPolicy="strict-origin-when-cross-origin"
+        className="aspect-video w-full rounded-xl bg-cocoa"
+      />
+    );
+  }
+
+  if (video.src && !fileMissing) {
+    return (
+      <video
+        ref={videoRef}
+        src={video.src}
+        poster={video.poster}
+        controls
+        preload="metadata"
+        onError={() => setFileMissing(true)}
+        onTimeUpdate={(event) => onTimeUpdate(event.currentTarget.currentTime)}
+        onLoadedMetadata={(event) => onDuration(event.currentTarget.duration)}
+        className="aspect-video w-full rounded-xl bg-cocoa"
+      />
+    );
+  }
+
+  // Nothing to play (still loading, or an upload that wasn't kept).
+  return (
+    <div className="relative aspect-video overflow-hidden rounded-xl bg-cocoa">
+      {video.poster && (
+        // eslint-disable-next-line @next/next/no-img-element -- served by the backend, not optimisable
+        <img src={video.poster} alt="" className="h-full w-full object-cover opacity-60" />
+      )}
+      {video.note && (
+        <p className="absolute inset-x-6 bottom-5 mx-auto w-fit rounded bg-cocoa/85 px-3 py-1.5 text-center text-[11px] text-white">
+          {video.note}
+        </p>
+      )}
+    </div>
   );
 }
 

@@ -6,7 +6,7 @@ import Link from "next/link";
 import { ArrowUpRight, Clock3, Heart, Plus, Search } from "lucide-react";
 import { setFavourite, thumbnailUrl, type RecipeSummary } from "@/app/lib/api";
 import { refreshRecipes, useRecipes } from "@/app/lib/useRecipes";
-import { cn } from "@/app/lib/format";
+import { cn, platformName } from "@/app/lib/format";
 
 const filters = [
   { label: "All recipes", matches: () => true },
@@ -217,7 +217,9 @@ function RecipeCard({
             <Clock3 size={13} strokeWidth={1.7} aria-hidden />
             {recipe.total_minutes ? `${recipe.total_minutes} min` : "Time not stated"}
           </span>
-          <span className="text-[10px]">Added {added}</span>
+          <span className="text-[10px]">
+            {recipe.platform ? `From ${platformName(recipe.platform)} · ${added}` : `Added ${added}`}
+          </span>
         </div>
       </div>
     </article>

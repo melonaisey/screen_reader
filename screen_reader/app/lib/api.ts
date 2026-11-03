@@ -42,15 +42,28 @@ export type RecipeSummary = {
   total_minutes: number | null;
   favourite: boolean;
   created_at: string;
+  platform: string | null; // e.g. "Youtube" for linked videos, null for uploads
+  creator: string | null;
   summary: string;
   ingredients: string[];
 };
 
-export type Job = {
+// Where a linked video came from. All null for uploaded files.
+export type VideoSource = {
+  source_url: string | null;
+  source_id: string | null;
+  platform: string | null;
+  creator: string | null;
+  thumbnail_url: string | null;
+};
+
+export type Job = VideoSource & {
   status: "processing" | "done" | "error";
-  stage: "reading" | "translating" | "recipe";
+  stage: "downloading" | "reading" | "translating" | "recipe";
   video_name: string | null;
   created_at?: string; // only once saved
+  downloaded: number; // bytes, while fetching a linked video
+  download_total: number;
   processed: number;
   total: number;
   translated: number; // batches translated so far
@@ -76,6 +89,23 @@ export async function uploadVideo(file: File): Promise<string> {
 
   if (!response.ok) {
     throw new Error(result.detail || "Upload failed.");
+  }
+
+  return result.job_id;
+}
+
+// Make a recipe from a video link. The backend fetches the video
+// temporarily and keeps only the transcript and recipe.
+export async function submitLink(url: string): Promise<string> {
+  const response = await fetch(`${API_URL}/api/links`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  const result = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(result.detail || "Couldn’t use that link.");
   }
 
   return result.job_id;
